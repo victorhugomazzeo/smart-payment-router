@@ -1,0 +1,6 @@
+@SmartPaymentRouter.Transactions.Api_HostAddress = http://localhost:5173
+
+GET {{SmartPaymentRouter.Transactions.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
