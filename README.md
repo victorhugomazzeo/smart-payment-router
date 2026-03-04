@@ -1,57 +1,90 @@
-# Smart Payment Router
+# Smart Payment Router (ML-based) — Microserviços para maximizar aprovação de adquirentes
 
-A microservices-based payment processor selector that intelligently 
-routes transactions to the best processor based on BIN, card brand, 
-installments, and historical approval rates.
+Sistema em **.NET** (microserviços) para **maximizar a taxa de aprovação** (approval rate) escolhendo, para cada tentativa de pagamento, o **melhor adquirente/processor** com base em dados históricos (bandeira, valor, parcelas, BIN, horário, etc.).
 
-## Overview
+## Como o sistema é utilizado (contexto)
 
-Smart Payment Router selects the optimal payment processor for each 
-transaction by analyzing historical data and approval rates. The system 
-learns from transaction results to continuously improve routing decisions.
+Este sistema **não executa o pagamento**.
 
-## Architecture
+Ele é chamado por um **sistema externo** (ex.: Checkout / Payment Orchestrator) **antes** de decidir qual adquirente usar:
 
-- Selector Service (.NET Core): Real-time processor selection
-- Analytics Service (.NET Core): Daily batch processing and learning
-- Message Broker: RabbitMQ for event-driven communication
-- Databases: PostgreSQL, MongoDB, Redis
+1. O sistema externo recebe uma tentativa de pagamento.
+2. Ele chama este Router para recomendação:
+   - `POST /processors/route`
+3. O Router responde com o `processor_id` recomendado (e metadados como `score`).
+4. O sistema externo executa o pagamento no adquirente escolhido.
+5. Depois, o sistema externo registra o resultado (aprovado/negado) para alimentar aprendizado:
+   - `POST /transactions`
 
-## Key Features
+## Arquitetura de microserviços (alto nível)
 
-- Sub-100ms routing decisions
-- Machine learning integration (roadmap)
-- Real-time metric updates
-- Event-driven architecture
-- Docker Compose setup
+### Microserviços
 
-## Use Case
+**1) API Gateway**
+- Único entrypoint público
+- Responsável por roteamento para os microserviços internos
+- (Opcional) autenticação, rate limit, correlation-id, logs
 
-E-commerce platforms, payment gateways, and subscription services can 
-integrate this API to minimize payment rejections and reduce transaction 
-costs by automatically selecting the best processor for each card/amount/installment combination.
+**2) Selector Service (Routing/Decision)**
+- Responsável pela decisão online (baixa latência): **qual processor maximiza aprovação**
+- Expõe:
+  - `POST /processors` — cadastra processor
+  - `POST /processors/{id}/deactivate` — desativa processor
+  - `POST /processors/route` — recomenda processor para uma transação
+- Consome eventos (RabbitMQ):
+  - `ProcessorModelUpdated` — atualiza o modelo ativo por processor
+- Banco (PostgreSQL):
+  - `processors` (estado/config do adquirente)
+  - `processor_models` (modelos versionados para inferência)
 
-## Tech Stack
+**3) Transactions Service (Ingestion)**
+- Responsável por registrar transações executadas e seus resultados
+- Expõe:
+  - `POST /transactions`
+- Banco (MongoDB):
+  - histórico de transações (fonte para treino offline)
 
-- C# .NET Core
-- PostgreSQL
-- MongoDB
-- Redis
-- RabbitMQ
-- Docker
+**4) Analytics/Training (offline)**
+- Treina modelos para prever `P(aprovado | features)`
+- Publica evento (RabbitMQ):
+  - `ProcessorModelUpdated`
 
-## How It Works
+## Fluxo de modelos (offline → online)
 
-1. Client sends transaction parameters (BIN, brand, installments)
-2. Selector returns optimal processor in <100ms
-3. Transaction is processed with chosen processor
-4. Result arrives and Analytics processes it (1x daily)
-5. Approval rates are recalculated
-6. Selector updates its decisions with new data
+1. O **Analytics** treina um modelo por processor (versão + janela de treino).
+2. Publica `ProcessorModelUpdated`.
+3. O **Selector Service** consome o evento e faz upsert em `processor_models` no Postgres (ativando a versão nova).
+4. No `POST /processors/route`, o Selector carrega modelos ativos, calcula scores e retorna o `processor_id` com maior valor.
 
-## Future Enhancements
+## Endpoints (v1)
 
-- Bayesian inference for decision making
-- Advanced ML models
-- Real-time processing
-- Data lake integration
+### Selector Service (via Gateway)
+- `POST /processors`
+- `POST /processors/{id}/deactivate`
+- `POST /processors/route`
+
+### Transactions Service (via Gateway)
+- `POST /transactions`
+
+> Nota: `POST /processors/route` é POST (não GET) para evitar expor dados sensíveis (ex.: BIN) em querystring e por ser uma decisão calculada.
+
+## Model runtime (pluggable)
+
+O Selector suporta múltiplos executores de modelos (runtimes), permitindo evolução do algoritmo sem reescrever o serviço.
+
+- **Hoje: `LinearJsonModelExecutor`**
+  - Modelo linear (ex.: regressão logística) representado por:
+    - `intercept`
+    - `weights_json` (peso por feature bucketizada)
+  - Inferência rápida (dot-product + sigmoid)
+
+- **Futuro: `OnnxModelExecutor`**
+  - Para modelos mais complexos (GBDT / deep learning) exportados para ONNX
+  - Inferência via ONNX Runtime em .NET
+  - Artefato versionado por `artifact_uri` + `sha256` (recomendado)
+
+## Infra (dev)
+
+- PostgreSQL: configurações e modelos (Selector)
+- MongoDB: histórico de transações (Transactions Service)
+- RabbitMQ: distribuição de modelos (Analytics → Selector)
