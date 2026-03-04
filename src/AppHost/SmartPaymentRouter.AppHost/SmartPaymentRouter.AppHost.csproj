@@ -8,4 +8,13 @@
     <UserSecretsId>7cf9a2b7-fe09-43b7-9f3d-cd3d9f57c0d4</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\Services\Router\SmartPaymentRouter.Router.Api\SmartPaymentRouter.Router.Api.csproj" />
+    <ProjectReference Include="..\..\Services\Transactions\SmartPaymentRouter.Transactions.Api\SmartPaymentRouter.Transactions.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Yarp" Version="13.1.2" />
+  </ItemGroup>
+
 </Project>
