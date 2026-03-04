@@ -14,6 +14,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.MongoDB" Version="13.1.2" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.1.2" />
     <PackageReference Include="Aspire.Hosting.Yarp" Version="13.1.2" />
   </ItemGroup>
 
